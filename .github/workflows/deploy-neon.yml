@@ -1,0 +1,29 @@
+name: Deploy Neon APK backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/apkapi/**"
+      - ".github/workflows/deploy-neon.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Neon CLI
+        run: npm install --global neon
+      - name: Deploy APK API to Neon
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+        run: |
+          test -n "$NEON_API_KEY" || { echo "Missing NEON_API_KEY repository secret"; exit 1; }
+          neon functions deploy apkapi --src backend/apkapi/index.mjs --project-id dry-fire-13288712 --branch main
