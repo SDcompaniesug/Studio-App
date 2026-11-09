@@ -48,6 +48,7 @@ jobs:
           mkdir -p android-src
           unzip -q StudioApp-source.zip -d android-src
           base64 -d studioapp-live-logs-v2.patch.gz.b64 | gunzip -c | (cd android-src && git apply -)
+          printf "android.useAndroidX=true\nandroid.enableJetifier=true\n" >> android-src/gradle.properties
           echo "Live logs, Neon APK URLs, FileProvider installer, and remote project deletion patch applied."
 
       - name: Prepare live build log stream
