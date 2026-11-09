@@ -7,6 +7,7 @@ on:
     paths:
       - "StudioApp-source.zip"
       - ".github/workflows/build-studio-app.yml"
+      - "backend/apkapi/index.mjs"
 
 permissions:
   contents: read
@@ -14,25 +15,85 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android 35 platform and build tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
       - name: Extract Android source
         run: |
-          test -f StudioApp-source.zip || { echo "Upload StudioApp_neon_github_updates.zip as StudioApp-source.zip in the repository root."; exit 1; }
+          test -f StudioApp-source.zip || { echo "StudioApp-source.zip is missing from the repository root."; exit 1; }
           mkdir -p android-src
           unzip -q StudioApp-source.zip -d android-src
-      - name: Build debug APK
-        working-directory: android-src
-        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare live build log stream
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEON_API_URL: https://br-steep-leaf-b59uvinr-apkapi.compute.c-7.us-east-2.aws.neon.tech
+          LOG_KEY: logs/${{ github.repository }}/${{ github.run_id }}/build.log
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl -fsS -X POST "$NEON_API_URL/logs-upload-url" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"key\\":\\"$LOG_KEY\\"}")
+          echo "LOG_UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')" >> "$GITHUB_ENV"
+
+      - name: Build debug APK and stream Gradle output
+        run: |
+          set -euo pipefail
+          LOG_FILE="$RUNNER_TEMP/studio-gradle-live.log"
+          LOG_DONE="$RUNNER_TEMP/studio-gradle-live.done"
+          : > "$LOG_FILE"
+          rm -f "$LOG_DONE"
+          (while [ ! -f "$LOG_DONE" ]; do curl -fsS -X PUT --upload-file "$LOG_FILE" "$LOG_UPLOAD_URL" >/dev/null 2>&1 || true; sleep 2; done; curl -fsS -X PUT --upload-file "$LOG_FILE" "$LOG_UPLOAD_URL" >/dev/null 2>&1 || true) &
+          SYNC_PID=$!
+          set +e
+          (cd android-src && gradle assembleDebug --no-daemon --stacktrace) 2>&1 | tee -a "$LOG_FILE"
+          BUILD_EXIT=${PIPESTATUS[0]}
+          touch "$LOG_DONE"
+          wait "$SYNC_PID" || true
+          exit "$BUILD_EXIT"
+
+      - name: Collect APK
+        run: cp android-src/app/build/outputs/apk/debug/app-debug.apk build-output.apk
+
       - uses: actions/upload-artifact@v4
         with:
           name: studio-app-debug
-          path: android-src/app/build/outputs/apk/debug/*.apk
+          path: build-output.apk
           if-no-files-found: error
+
+      - name: Upload APK to Neon Storage
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          NEON_API_URL: https://br-steep-leaf-b59uvinr-apkapi.compute.c-7.us-east-2.aws.neon.tech
+          APK_KEY: apks/${{ github.repository }}/${{ github.run_id }}/app.apk
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl -fsS -X POST "$NEON_API_URL/upload-url" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"key\\":\\"$APK_KEY\\"}")
+          UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')
+          test -n "$UPLOAD_URL" && test "$UPLOAD_URL" != null
+          curl -fS -X PUT --upload-file build-output.apk "$UPLOAD_URL"
+          echo "APK stored in Neon: $APK_KEY"
