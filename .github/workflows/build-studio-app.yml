@@ -8,6 +8,7 @@ on:
       - "StudioApp-source.zip"
       - ".github/workflows/build-studio-app.yml"
       - "backend/apkapi/index.mjs"
+      - "studioapp-live-logs-v2.patch.gz.b64"
 
 permissions:
   contents: read
@@ -27,6 +28,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android 35 platform and build tools
         run: |
@@ -38,11 +41,14 @@ jobs:
         with:
           gradle-version: "8.9"
 
-      - name: Extract Android source
+      - name: Extract and patch Android source
         run: |
+          set -euo pipefail
           test -f StudioApp-source.zip || { echo "StudioApp-source.zip is missing from the repository root."; exit 1; }
           mkdir -p android-src
           unzip -q StudioApp-source.zip -d android-src
+          base64 -d studioapp-live-logs-v2.patch.gz.b64 | gunzip -c | (cd android-src && git apply -)
+          echo "Live logs, Neon APK URLs, FileProvider installer, and remote project deletion patch applied."
 
       - name: Prepare live build log stream
         env:
