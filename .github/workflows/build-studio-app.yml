@@ -57,11 +57,14 @@ jobs:
           LOG_KEY: logs/${{ github.repository }}/${{ github.run_id }}/build.log
         run: |
           set -euo pipefail
+          BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg key "$LOG_KEY" '{repo:$repo,key:$key}')
           RESPONSE=$(curl -fsS -X POST "$NEON_API_URL/logs-upload-url" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"key\\":\\"$LOG_KEY\\"}")
-          echo "LOG_UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')" >> "$GITHUB_ENV"
+            -d "$BODY")
+          LOG_UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')
+          test -n "$LOG_UPLOAD_URL" && test "$LOG_UPLOAD_URL" != null
+          echo "LOG_UPLOAD_URL=$LOG_UPLOAD_URL" >> "$GITHUB_ENV"
 
       - name: Build debug APK and stream Gradle output
         run: |
@@ -95,10 +98,11 @@ jobs:
           APK_KEY: apks/${{ github.repository }}/${{ github.run_id }}/app.apk
         run: |
           set -euo pipefail
+          BODY=$(jq -n --arg repo "$GITHUB_REPOSITORY" --arg key "$APK_KEY" '{repo:$repo,key:$key}')
           RESPONSE=$(curl -fsS -X POST "$NEON_API_URL/upload-url" \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\\"repo\\":\\"$GITHUB_REPOSITORY\\",\\"key\\":\\"$APK_KEY\\"}")
+            -d "$BODY")
           UPLOAD_URL=$(echo "$RESPONSE" | jq -r '.url')
           test -n "$UPLOAD_URL" && test "$UPLOAD_URL" != null
           curl -fS -X PUT --upload-file build-output.apk "$UPLOAD_URL"
